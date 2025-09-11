@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Space Dodger — Fighter Jet Edition</title>
+  <style>
+    :root{--bg:#07101a;--ship:#7fe3ff;--enemy:#ff7b7b;--text:#e6f7ff}
+    html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    body{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#021018,#082229);color:var(--text)}
+    .wrap{width:min(920px,96vw);max-width:1000px;padding:18px}
+    h1{margin:0 0 12px;font-size:20px}
+    .top{display:flex;gap:12px;align-items:center;margin-bottom:8px}
+    #game{background:var(--bg);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(2,20,30,.6);width:100%;height:540px}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{background:#0b2b35;border:1px solid rgba(255,255,255,.06);color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer}
+    button:active{transform:translateY(1px)}
+    .info{margin-left:auto;text-align:right}
+    .small{font-size:13px;color:rgba(230,247,255,.8)}
+    .hint{font-size:13px;color:rgba(230,247,255,.7);margin-top:8px}
+    @media (max-width:600px){#game{height:440px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>Space Dodger — Fighter Jet Edition</h1>
+        <div class="small">Use arrow keys / A & D to move; tap left/right on mobile. Survive and get the high score.</div>
+      </div>
+      <div class="controls">
+        <button id="startBtn">Start</button>
+        <button id="pauseBtn">Pause</button>
+        <button id="resetBtn">Reset</button>
+        <div class="info">
+          <div>Score: <span id="score">0</span></div>
+          <div class="small">Highscore: <span id="high">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="game" width="900" height="540"></canvas>
+    <div class="hint">Tip: The longer you survive, the faster enemies spawn. Press R to restart after game over.</div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const startBtn = document.getElementById('startBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const scoreEl = document.getElementById('score');
+  const highEl = document.getElementById('high');
+
+  let W = canvas.width; let H = canvas.height;
+  function resize() {
+    const ratio = canvas.width / canvas.height;
+    const w = Math.min(window.innerWidth * 0.96, 920);
+    const h = Math.round(w / ratio);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const state = {
+    running:false,
+    paused:false,
+    gameover:false,
+    score:0,
+    high: Number(localStorage.getItem('space_dodger_high') || 0),
+    lastTime:0,
+    spawnTimer:0,
+    spawnInterval:1400,
+    speedMultiplier:1,
+  };
+  highEl.textContent = state.high;
+
+  const player = {
+    x: W/2,
+    y: H - 80,
+    w: 46,
+    h: 56,
+    speed: 6,
+    vx: 0
+  };
+
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === 'r' || e.key === 'R') resetGame();
+    if (e.key === ' ' || e.key === 'Spacebar') togglePause();
+  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const cx = (t.clientX - rect.left) / rect.width * canvas.width;
+    keys['touchleft'] = cx < canvas.width/2;
+    keys['touchright'] = cx >= canvas.width/2;
+  }, {passive:false});
+  canvas.addEventListener('touchend', e => { keys['touchleft']=false; keys['touchright']=false; });
+
+  const enemies = [];
+
+  function spawnEnemy() {
+    const size = 20 + Math.random()*36;
+    const x = Math.random()*(W-40) + 20;
+    const y = -size - 10;
+    const speed = 1.5 + Math.random()*2.5 + state.speedMultiplier*0.35;
+    enemies.push({x,y,w:size,h:size,speed});
+  }
+
+  function resetGame() {
+    state.running = false;
+    state.paused = false;
+    state.gameover = false;
+    state.score = 0;
+    state.spawnTimer = 0;
+    state.spawnInterval = 1400;
+    state.speedMultiplier = 1;
+    enemies.length = 0;
+    player.x = W/2;
+    scoreEl.textContent = state.score;
+    startBtn.textContent = 'Start';
+    render();
+  }
+
+  function startGame() {
+    if (state.running && !state.gameover) return;
+    state.running = true;
+    state.paused = false;
+    state.gameover = false;
+    state.lastTime = performance.now();
+    startBtn.textContent = 'Running...';
+    requestAnimationFrame(loop);
+  }
+
+  function togglePause() {
+    if (!state.running) return;
+    state.paused = !state.paused;
+    pauseBtn.textContent = state.paused ? 'Resume' : 'Pause';
+    if (!state.paused) {
+      state.lastTime = performance.now();
+      requestAnimationFrame(loop);
+    }
+  }
+
+  startBtn.addEventListener('click', startGame);
+  pauseBtn.addEventListener('click', togglePause);
+  resetBtn.addEventListener('click', resetGame);
+
+  function rectsOverlap(a,b){
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function update(dt) {
+    if (!state.running || state.paused || state.gameover) return;
+
+    player.vx = 0;
+    if (keys['arrowleft'] || keys['a'] || keys['touchleft']) player.vx = -player.speed;
+    if (keys['arrowright'] || keys['d'] || keys['touchright']) player.vx = player.speed;
+    player.x += player.vx;
+    if (player.x < 10) player.x = 10;
+    if (player.x + player.w > W-10) player.x = W - 10 - player.w;
+
+    state.spawnTimer += dt;
+    state.spawnInterval = 1400 - (state.score * 8);
+    if (state.spawnTimer > state.spawnInterval) {
+      spawnEnemy();
+      state.spawnTimer = 0;
+    }
+
+    for (let i = enemies.length-1; i>=0; i--) {
+      const e = enemies[i];
+      e.y += e.speed + state.score*0.003;
+      if (e.y - e.h > H) { enemies.splice(i,1); state.score += 1; scoreEl.textContent = state.score; continue; }
+      const pRect = {x:player.x, y:player.y, w:player.w, h:player.h};
+      const eRect = {x:e.x - e.w/2, y:e.y - e.h/2, w:e.w, h:e.h};
+      if (rectsOverlap(pRect, eRect)) {
+        state.gameover = true;
+        state.running = false;
+        if (state.score > state.high) {
+          state.high = state.score; localStorage.setItem('space_dodger_high', state.high);
+          highEl.textContent = state.high;
+        }
+        startBtn.textContent = 'Start';
+      }
+    }
+  }
+
+  function drawFighterJet(x,y,w,h){
+    ctx.save();
+    ctx.translate(x+w/2,y+h/2);
+    ctx.fillStyle = '#7fe3ff';
+
+    // Main body
+    ctx.fillRect(-w*0.15, -h*0.5, w*0.3, h*0.9);
+
+    // Cockpit
+    ctx.fillStyle = '#00323b';
+    ctx.fillRect(-w*0.1, -h*0.45, w*0.2, h*0.2);
+
+    // Wings
+    ctx.fillStyle = '#7fe3ff';
+    ctx.beginPath();
+    ctx.moveTo(-w*0.5, -h*0.1);
+    ctx.lineTo(-w*0.15, 0);
+    ctx.lineTo(-w*0.15, h*0.25);
+    ctx.lineTo(-w*0.5, h*0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(w*0.5, -h*0.1);
+    ctx.lineTo(w*0.15, 0);
+    ctx.lineTo(w*0.15, h*0.25);
+    ctx.lineTo(w*0.5, h*0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Tail fin
+    ctx.fillRect(-w*0.1, h*0.2, w*0.2, h*0.3);
+
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = '#03161b';
+    ctx.fillRect(0,0,W,H);
+    for (let i=0;i<60;i++){
+      const x = (i*47) % W;
+      const y = (i*83) % H;
+      ctx.fillStyle = 'rgba(255,255,255,'+ (0.06 + (i%6)*0.02) +')';
+      ctx.fillRect(x, y, 1.5,1.5);
+    }
+
+    // Draw player as fighter jet
+    drawFighterJet(player.x, player.y, player.w, player.h);
+
+    enemies.forEach(e => {
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.fillStyle = '#ff7b7b';
+      ctx.beginPath();
+      ctx.moveTo(-e.w/2, -e.h/2);
+      ctx.lineTo(e.w/2, -e.h/2 + 4);
+      ctx.lineTo(e.w/2 - 6, e.h/2);
+      ctx.lineTo(-e.w/2 + 4, e.h/2 - 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    });
+
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(12,12,160,36);
+    ctx.fillStyle = '#e6f7ff';
+    ctx.font = '18px ui-sans-serif, system-ui, -apple-system';
+    ctx.fillText('Score: ' + state.score, 20, 36);
+
+    if (!state.running && !state.gameover) {
+      ctx.fillStyle = 'rgba(0,0,0,0.44)';
+      ctx.fillRect(W/2 - 190, H/2 - 60, 380, 120);
+      ctx.fillStyle = '#e6f7ff';
+      ctx.font = '20px ui-sans-serif';
+      ctx.fillText('Press Start to play', W/2 - 75, H/2 - 10);
+      ctx.font = '14px ui-sans-serif';
+      ctx.fillText('Move: ← →  or A/D. Tap left/right on mobile.', W/2 - 140, H/2 + 20);
+    }
+
+    if (state.gameover) {
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(0,0,W,H);
+      ctx.fillStyle = '#ffdede';
+      ctx.font = '40px ui-sans-serif';
+      ctx.fillText('Game Over', W/2 - 110, H/2 - 10);
+      ctx.font = '18px ui-sans-serif';
+      ctx.fillStyle = '#e6f7ff';
+      ctx.fillText('Score: ' + state.score, W/2 - 48, H/2 + 26);
+      ctx.font = '14px ui-sans-serif';
+      ctx.fillText('Press R to restart', W/2 - 60, H/2 + 56);
+    }
+  }
+
+  function loop(now) {
+    const dt = now - state.lastTime;
+    state.lastTime = now;
+    update(dt);
+    render();
+    if (!state.gameover && state.running && !state.paused) requestAnimationFrame(loop);
+  }
+
+  render();
+  window.spaceDodger = {reset: resetGame, start: startGame};
+})();
+</script>
+</body>
+</html>
