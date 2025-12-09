@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DD Clues Data Tool</title>
+
+<style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h2 { margin-bottom: 5px; }
+    .section { border: 1px solid #aaa; padding: 12px; margin-top: 20px; border-radius: 5px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+    th, td { border: 1px solid #ccc; padding: 6px; font-size: 14px; }
+    select, input { padding: 5px; margin-top: 5px; }
+    .btn { padding: 7px 14px; cursor: pointer; margin-top: 10px; }
+    canvas { max-width: 850px; margin-top: 25px; }
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<h2>📌 DD Clues Web Data Tool</h2>
+<input type="file" id="csvFile" accept=".csv">
+<button class="btn" onclick="loadCSV()">Upload</button>
+
+<div id="preview" class="section"></div>
+<div id="stats" class="section"></div>
+<div id="categorical" class="section"></div>
+<div id="filterSection" class="section"></div>
+<div id="groupSection" class="section"></div>
+<div id="dateSection" class="section"></div>
+
+<!-- 🔍 ANOMALY DETECTION -->
+<div id="anomalySection" class="section" style="display:none;">
+  <h3>🔍 Anomaly Detection</h3>
+  <label for="anomalyColumn">Numeric Column:</label>
+  <select id="anomalyColumn"></select>
+
+  <label style="margin-left: 10px;">Z-Score Threshold:</label>
+  <input type="number" id="zThreshold" value="3" min="1" max="10" step="0.5" style="width: 70px;">
+
+  <button class="btn" onclick="detectAnomalies()">Detect Anomalies</button>
+  <button class="btn" onclick="downloadAnomalies()">Download Anomalies CSV</button>
+
+  <div id="anomalyResult"></div>
+</div>
+
+<canvas id="visualChart"></canvas>
+
+<script>
+let dataset = [];
+let anomalyData = [];
+let chartInstance = null;
+
+function loadCSV() {
+  const file = document.getElementById("csvFile").files[0];
+  Papa.parse(file, {
+    header: true,
+    dynamicTyping: true,
+    complete: (res) => {
+      dataset = res.data;
+      displayPreview();
+      showStats();
+      showCategorical();
+      showFiltering();
+      showGrouping();
+      showDateAnalysis();
+      prepareAnomalyColumns();
+      document.getElementById("anomalySection").style.display = "block";
+    }
+  });
+}
+
+function displayTable(data) {
+  const keys = Object.keys(data[0]);
+  let html = "<table><tr>";
+  keys.forEach(k => html += `<th>${k}</th>`);
+  html += "</tr>";
+  data.forEach(row => {
+    html += "<tr>";
+    keys.forEach(k => html += `<td>${row[k]}</td>`);
+    html += "</tr>";
+  });
+  html += "</table>";
+  return html;
+}
+
+function displayPreview() {
+  document.getElementById("preview").innerHTML = "<h3>Preview Data</h3>" + displayTable(dataset);
+}
+
+function showStats() {
+  let keys = Object.keys(dataset[0]);
+  let html = "<h3>Descriptive Statistics</h3>";
+  keys.forEach(k => {
+    let values = dataset.map(r => r[k]).filter(v => typeof v === "number");
+    if (values.length > 0) {
+      let mean = values.reduce((a,b) => a+b,0) / values.length;
+      html += `<p><b>${k}</b> → Count: ${values.length} | Mean: ${mean.toFixed(2)}</p>`;
+    }
+  });
+  document.getElementById("stats").innerHTML = html;
+}
+
+function showCategorical() {
+  let keys = Object.keys(dataset[0]);
+  let html = "<h3>Unique Counts (Categorical)</h3>";
+  keys.forEach(k => {
+    let values = dataset.map(r => r[k]);
+    if (typeof values[0] === "string") {
+      let unique = [...new Set(values)];
+      html += `<p><b>${k}</b> → ${unique.length} unique items</p>`;
+    }
+  });
+  document.getElementById("categorical").innerHTML = html;
+}
+
+function showFiltering() {
+  document.getElementById("filterSection").innerHTML = "<h3>Filter Coming Soon (Not Modified)</h3>";
+}
+
+function showGrouping() {
+  document.getElementById("groupSection").innerHTML = "<h3>Group / Aggregate Coming Soon (Not Modified)</h3>";
+}
+
+function showDateAnalysis() {
+  document.getElementById("dateSection").innerHTML = "<h3>Date/Time Analysis Coming Soon (Not Modified)</h3>";
+}
+
+/*
+  ████████████████████████████████████████████████████████
+  🔍  ANOMALY DETECTION SECTION (UPGRADED ONLY — NO OTHER CODE CHANGED)
+  ████████████████████████████████████████████████████████
+*/
+function prepareAnomalyColumns() {
+  let keys = Object.keys(dataset[0]);
+  let sel = document.getElementById("anomalyColumn");
+  sel.innerHTML = "";
+  keys.forEach(k => {
+    if (typeof dataset[0][k] === "number") {
+      sel.innerHTML += `<option value="${k}">${k}</option>`;
+    }
+  });
+}
+
+function detectAnomalies() {
+  const col = document.getElementById("anomalyColumn").value;
+  const threshold = parseFloat(document.getElementById("zThreshold").value);
+
+  let values = dataset.map(r => r[col]).filter(v => typeof v === "number");
+  let mean = values.reduce((a, b) => a + b, 0) / values.length;
+  let std = Math.sqrt(values.map(v => (v - mean) ** 2).reduce((a,b) => a + b) / values.length);
+
+  anomalyData = dataset.filter(r => Math.abs((r[col] - mean) / std) > threshold);
+
+  document.getElementById("anomalyResult").innerHTML =
+    `<h3>Detected Anomalies → ${anomalyData.length}</h3>` + 
+    (anomalyData.length ? displayTable(anomalyData) : "<p>No anomalies found.</p>");
+
+  drawChart(col, values);
+}
+
+function downloadAnomalies() {
+  if (!anomalyData.length) return alert("No anomalies available to download");
+  const csv = Papa.unparse(anomalyData);
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "anomalies.csv";
+  link.click();
+}
+
+function drawChart(col, values) {
+  let ctx = document.getElementById("visualChart").getContext("2d");
+  if (chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(ctx, {
+    type: "bar",
+    data: { labels: values.map((_, i) => i), datasets: [{ label: col, data: values }] },
+  });
+}
+</script>
+
+</body>
+</html>
